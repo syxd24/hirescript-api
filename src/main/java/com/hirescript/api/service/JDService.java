@@ -7,6 +7,8 @@ import com.hirescript.api.entity.JdRequestInput;
 import com.hirescript.api.entity.JobDescription;
 import com.hirescript.api.repository.JdRequestInputRepository;
 import com.hirescript.api.repository.JobDescriptionRepository;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
@@ -18,19 +20,26 @@ public class JDService {
     private final AiClient aiClient;
     private final JobDescriptionRepository jobDescriptionRepository;
     private final JdRequestInputRepository jdRequestInputRepository;
+    private final Environment environment;
 
     public JDService(
             AiClient aiClient,
-            JobDescriptionRepository jobDescriptionRepository,
-            JdRequestInputRepository jdRequestInputRepository
+            ObjectProvider<JobDescriptionRepository> jobDescriptionRepository,
+            ObjectProvider<JdRequestInputRepository> jdRequestInputRepository,
+            Environment environment
     ) {
         this.aiClient = aiClient;
-        this.jobDescriptionRepository = jobDescriptionRepository;
-        this.jdRequestInputRepository = jdRequestInputRepository;
+        this.jobDescriptionRepository = jobDescriptionRepository.getIfAvailable();
+        this.jdRequestInputRepository = jdRequestInputRepository.getIfAvailable();
+        this.environment = environment;
     }
 
     public JDResponse generateJd(JDRequest request) {
         String content = aiClient.generateJobDescription(request);
+
+        if (isDummyProfileActive()) {
+            return new JDResponse(UUID.randomUUID(), content);
+        }
 
         OffsetDateTime now = OffsetDateTime.now();
 
@@ -75,5 +84,14 @@ public class JDService {
         jdRequestInputRepository.save(jdRequestInput);
 
         return new JDResponse(savedJobDescription.getId(), savedJobDescription.getContent());
+    }
+
+    private boolean isDummyProfileActive() {
+        for (String profile : environment.getActiveProfiles()) {
+            if ("dummy".equals(profile)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
