@@ -5,7 +5,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 @Component
-@Profile("dummy")
+@Profile({"dummy", "local"})
 public class DummyAiClient implements AiClient {
 
     @Override
