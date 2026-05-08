@@ -14,8 +14,6 @@ export class JdApiError extends Error {
 }
 
 export async function generateJd(request: GenerateJdRequest): Promise<GenerateJdResponse> {
-  console.info('Calling backend')
-
   let response: Response
 
   try {
@@ -30,17 +28,12 @@ export async function generateJd(request: GenerateJdRequest): Promise<GenerateJd
     throw new JdApiError(BACKEND_CONNECTION_ERROR)
   }
 
-  console.info('Backend response status', response.status)
-
   if (!response.ok) {
     const problem = await readProblemDetail(response)
     throw new JdApiError(problem?.detail || problem?.title || 'Could not generate job description.', response.status)
   }
 
-  const generated = (await response.json()) as GenerateJdResponse
-  console.info('Returned response id', generated.id)
-
-  return generated
+  return (await response.json()) as GenerateJdResponse
 }
 
 async function readProblemDetail(response: Response): Promise<ProblemDetail | null> {
