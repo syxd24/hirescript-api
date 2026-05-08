@@ -6,8 +6,11 @@ import {
   type ChangeEvent,
   type FormEvent,
 } from 'react'
+import { generateJd } from '../api/jdApi'
+import JDContentRenderer from './JDContentRenderer'
 import type {
   EducationRequirement,
+  GenerateJdRequest,
   JdFormData,
   Seniority,
   TargetLength,
@@ -114,6 +117,78 @@ function splitList(value: string) {
     .filter(Boolean)
 }
 
+function optionalString(value: string) {
+  const trimmedValue = value.trim()
+  return trimmedValue || undefined
+}
+
+function optionalNumber(value: string) {
+  const trimmedValue = value.trim()
+  if (!trimmedValue) {
+    return undefined
+  }
+
+  const parsedValue = Number(trimmedValue)
+  return Number.isFinite(parsedValue) ? parsedValue : undefined
+}
+
+function buildGenerateJdRequest(
+  formData: JdFormData,
+  mustHaveSkills: string[],
+  niceToHaveSkills: string[],
+  benefits: string[],
+): GenerateJdRequest {
+  const cultureKeywords = splitList(formData.cultureKeywords)
+
+  return {
+    jobTitle: formData.jobTitle.trim(),
+    seniority: formData.seniority,
+    location: formData.location.trim(),
+    workMode: formData.workMode,
+    mustHaveSkills,
+    tone: formData.tone,
+    targetLength: formData.targetLength,
+    companyName: optionalString(formData.companyName),
+    department: optionalString(formData.department),
+    industry: optionalString(formData.industry),
+    niceToHaveSkills: niceToHaveSkills.length > 0 ? niceToHaveSkills : undefined,
+    yearsExperience: optionalString(formData.yearsExperience),
+    educationRequirement:
+      formData.educationRequirement === 'NONE' ? undefined : formData.educationRequirement,
+    salaryMin: optionalNumber(formData.salaryMin),
+    salaryMax: optionalNumber(formData.salaryMax),
+    salaryCurrency: optionalString(formData.salaryCurrency),
+    benefits: benefits.length > 0 ? benefits : undefined,
+    cultureKeywords: cultureKeywords.length > 0 ? cultureKeywords : undefined,
+    growthOpportunity: optionalString(formData.growthOpportunity),
+    targetPersona: optionalString(formData.targetPersona),
+    notes: optionalString(formData.notes),
+  }
+}
+
+function createAnimationChunks(content: string) {
+  return content
+    .replace(/\r\n/g, '\n')
+    .split(/(\n+)/)
+    .reduce<string[]>((chunks, chunk) => {
+      if (!chunk) {
+        return chunks
+      }
+
+      if (/^\n+$/.test(chunk)) {
+        const previousChunk = chunks[chunks.length - 1]
+        if (previousChunk) {
+          chunks[chunks.length - 1] = `${previousChunk}${chunk}`
+        }
+        return chunks
+      }
+
+      chunks.push(chunk)
+      return chunks
+    }, [])
+    .filter(Boolean)
+}
+
 function fallback(value: string, emptyValue: string) {
   return value.trim() || emptyValue
 }
@@ -123,6 +198,12 @@ function GeneratorForm({ onBackToLanding }: GeneratorFormProps) {
   const [currentStep, setCurrentStep] = useState(0)
   const [errors, setErrors] = useState<FormErrors>({})
   const [hasGenerated, setHasGenerated] = useState(false)
+  const [generatedJdId, setGeneratedJdId] = useState<string | null>(null)
+  const [generatedContent, setGeneratedContent] = useState('')
+  const [displayedContent, setDisplayedContent] = useState('')
+  const [apiError, setApiError] = useState<string | null>(null)
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
   const [showCompactResult, setShowCompactResult] = useState(false)
   const [panelWidth, setPanelWidth] = useState(400)
   const [isResizing, setIsResizing] = useState(false)
@@ -166,6 +247,33 @@ function GeneratorForm({ onBackToLanding }: GeneratorFormProps) {
       window.removeEventListener('pointerup', handlePointerUp)
     }
   }, [isResizing])
+
+  useEffect(() => {
+    if (!generatedContent || isGenerating) {
+      return
+    }
+
+    const chunks = createAnimationChunks(generatedContent)
+    let chunkIndex = 0
+    let nextContent = ''
+    let timeoutId: number
+
+    const revealNextChunk = () => {
+      nextContent += chunks[chunkIndex]
+      setDisplayedContent(nextContent)
+      chunkIndex += 1
+
+      if (chunkIndex < chunks.length) {
+        timeoutId = window.setTimeout(revealNextChunk, 120)
+      }
+    }
+
+    timeoutId = window.setTimeout(revealNextChunk, 140)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [generatedContent, isGenerating])
 
   const updateField = <Key extends keyof JdFormData>(field: Key, value: JdFormData[Key]) => {
     setFormData((current) => ({ ...current, [field]: value }))
@@ -226,17 +334,45 @@ function GeneratorForm({ onBackToLanding }: GeneratorFormProps) {
     }
   }
 
-  const generatePreview = () => {
+  const validateAllRequiredFields = () => {
     for (let index = 0; index < steps.length; index += 1) {
       if (!validateStep(index)) {
         setCurrentStep(index)
-        return
+        return false
       }
     }
 
-    setHasGenerated(true)
-    if (window.matchMedia('(max-width: 999px)').matches) {
-      setShowCompactResult(true)
+    return true
+  }
+
+  const generatePreview = async () => {
+    if (isGenerating || !validateAllRequiredFields()) {
+      return
+    }
+
+    setIsGenerating(true)
+    setApiError(null)
+    setCopyStatus('idle')
+    setDisplayedContent('')
+    setGeneratedContent('')
+    setGeneratedJdId(null)
+    setHasGenerated(false)
+
+    try {
+      const response = await generateJd(
+        buildGenerateJdRequest(formData, mustHaveSkills, niceToHaveSkills, benefits),
+      )
+      setGeneratedJdId(response.id)
+      setGeneratedContent(response.content)
+      setHasGenerated(true)
+
+      if (window.matchMedia('(max-width: 999px)').matches) {
+        setShowCompactResult(true)
+      }
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : 'Could not generate job description.')
+    } finally {
+      setIsGenerating(false)
     }
   }
 
@@ -250,13 +386,20 @@ function GeneratorForm({ onBackToLanding }: GeneratorFormProps) {
     generatePreview()
   }
 
-  const jdPreviewDocument = (
-    <JdPreviewDocument
-      formData={formData}
-      mustHaveSkills={mustHaveSkills}
-      niceToHaveSkills={niceToHaveSkills}
-    />
-  )
+  const copyGeneratedContent = async () => {
+    if (!generatedContent || isGenerating) {
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(generatedContent)
+      setCopyStatus('copied')
+    } catch {
+      setCopyStatus('failed')
+    }
+  }
+
+  const jdOutputDocument = displayedContent ? <JdOutputDocument content={displayedContent} /> : null
   const workspaceStyle = {
     '--form-panel-width': `${panelWidth}px`,
   } as CSSProperties & Record<'--form-panel-width', string>
@@ -266,7 +409,12 @@ function GeneratorForm({ onBackToLanding }: GeneratorFormProps) {
       <main className="jd-workspace compact-result-screen">
         <header className="jd-appbar">
           <div className="jd-appbar-left">
-            <button className="jd-logo-button" type="button" onClick={onBackToLanding}>
+            <button
+              className="jd-logo-button"
+              type="button"
+              onClick={onBackToLanding}
+              disabled={isGenerating}
+            >
               <span className="brand-mark" aria-hidden="true">
                 HS
               </span>
@@ -282,6 +430,7 @@ function GeneratorForm({ onBackToLanding }: GeneratorFormProps) {
               className="appbar-button"
               type="button"
               onClick={() => setShowCompactResult(false)}
+              disabled={isGenerating}
             >
               Back to form
             </button>
@@ -291,14 +440,28 @@ function GeneratorForm({ onBackToLanding }: GeneratorFormProps) {
           <div className="output-panel-head">
             <div>
               <h2>JD Output</h2>
-              <span className="output-status generated">Preview mode</span>
+              <span className="output-status generated">
+                {generatedJdId ? `Generated ${generatedJdId.slice(0, 8)}` : 'Generated'}
+              </span>
             </div>
             <div className="output-actions">
-              <button type="button">Copy</button>
-              <button type="button">Export</button>
+              <button type="button" onClick={copyGeneratedContent} disabled={!generatedContent || isGenerating}>
+                {copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : 'Copy'}
+              </button>
+              <button type="button" onClick={generatePreview} disabled={!canGenerate || isGenerating}>
+                Regenerate
+              </button>
             </div>
           </div>
-          <div className="output-content output-content-animated">{jdPreviewDocument}</div>
+          <div className="output-content output-content-animated">
+            {isGenerating ? (
+              <GeneratingState />
+            ) : jdOutputDocument ? (
+              jdOutputDocument
+            ) : (
+              <OutputState title="Writing your JD" message="The generated content is appearing now." />
+            )}
+          </div>
         </section>
       </main>
     )
@@ -308,7 +471,12 @@ function GeneratorForm({ onBackToLanding }: GeneratorFormProps) {
     <main className="jd-workspace">
       <header className="jd-appbar">
         <div className="jd-appbar-left">
-          <button className="jd-logo-button" type="button" onClick={onBackToLanding}>
+          <button
+            className="jd-logo-button"
+            type="button"
+            onClick={onBackToLanding}
+            disabled={isGenerating}
+          >
             <span className="brand-mark" aria-hidden="true">
               HS
             </span>
@@ -321,21 +489,21 @@ function GeneratorForm({ onBackToLanding }: GeneratorFormProps) {
         </div>
 
         <div className="jd-appbar-actions">
-          <button className="appbar-button" type="button">
+          <button className="appbar-button" type="button" disabled={isGenerating}>
             Save draft
           </button>
           <button
             className="appbar-button appbar-button-primary"
             type="button"
             onClick={generatePreview}
-            disabled={!canGenerate}
+            disabled={!canGenerate || isGenerating}
           >
-            Generate JD
+            {isGenerating ? 'Generating...' : 'Generate JD'}
           </button>
         </div>
       </header>
 
-      <div className="jd-appbody" style={workspaceStyle}>
+      <div className={`jd-appbody ${isGenerating ? 'is-loading' : ''}`} style={workspaceStyle}>
         <aside className="jd-form-panel">
           <div className="form-panel-head">
             <p className="step-label">Step {currentStep + 1} of {steps.length}</p>
@@ -355,6 +523,7 @@ function GeneratorForm({ onBackToLanding }: GeneratorFormProps) {
                   .join(' ')}
                 type="button"
                 onClick={() => goToStep(index)}
+                disabled={isGenerating}
                 key={step.title}
                 aria-label={step.title}
               >
@@ -363,6 +532,7 @@ function GeneratorForm({ onBackToLanding }: GeneratorFormProps) {
             ))}
           </div>
 
+          {apiError && <div className="form-error-banner">{apiError}</div>}
           <form className="workspace-form" onSubmit={handleSubmit}>
             <div className="workspace-form-content" ref={formContentRef}>
               <div className="step-content" key={currentStep}>
@@ -612,7 +782,7 @@ function GeneratorForm({ onBackToLanding }: GeneratorFormProps) {
                   className="workspace-button workspace-button-secondary"
                   type="button"
                   onClick={() => setCurrentStep((step) => Math.max(step - 1, 0))}
-                  disabled={currentStep === 0}
+                  disabled={currentStep === 0 || isGenerating}
                 >
                   Back
                 </button>
@@ -620,7 +790,7 @@ function GeneratorForm({ onBackToLanding }: GeneratorFormProps) {
                   <button
                     className="workspace-button workspace-button-primary"
                     type="submit"
-                    disabled={!isCurrentStepComplete()}
+                    disabled={!isCurrentStepComplete() || isGenerating}
                   >
                     Next
                   </button>
@@ -628,9 +798,9 @@ function GeneratorForm({ onBackToLanding }: GeneratorFormProps) {
                   <button
                     className="workspace-button workspace-button-primary"
                     type="submit"
-                    disabled={!canGenerate}
+                    disabled={!canGenerate || isGenerating}
                   >
-                    Generate JD
+                    {isGenerating ? 'Generating...' : 'Generate JD'}
                   </button>
                 )}
               </div>
@@ -656,95 +826,101 @@ function GeneratorForm({ onBackToLanding }: GeneratorFormProps) {
           <div className="output-panel-head">
             <div>
               <h2>JD Output</h2>
-              <span className={`output-status ${hasGenerated ? 'generated' : ''}`}>
-                {hasGenerated ? 'Preview mode' : 'Waiting for generation'}
+              <span className={`output-status ${hasGenerated || isGenerating ? 'generated' : ''}`}>
+                {isGenerating
+                  ? 'Generating'
+                  : hasGenerated
+                    ? generatedJdId
+                      ? `Generated ${generatedJdId.slice(0, 8)}`
+                      : 'Generated'
+                    : 'Waiting for generation'}
               </span>
             </div>
             <div className="output-actions">
-              <button type="button">Copy</button>
-              <button type="button">Export</button>
-              <button type="button" onClick={generatePreview} disabled={!canGenerate}>
+              <button type="button" onClick={copyGeneratedContent} disabled={!generatedContent || isGenerating}>
+                {copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : 'Copy'}
+              </button>
+              <button type="button" onClick={generatePreview} disabled={!canGenerate || isGenerating}>
                 Regenerate
               </button>
             </div>
           </div>
 
           <div className="output-content">
-            {hasGenerated ? (
-              <div className="output-content-animated">{jdPreviewDocument}</div>
+            {isGenerating ? (
+              <GeneratingState />
+            ) : apiError ? (
+              <OutputState title="Generation failed" message={apiError} tone="error" />
+            ) : hasGenerated && jdOutputDocument ? (
+              <div className="output-content-animated">{jdOutputDocument}</div>
+            ) : hasGenerated && generatedContent ? (
+              <OutputState title="Writing your JD" message="The generated content is appearing now." />
             ) : (
-              <div className="output-empty-state">
-                <div aria-hidden="true">HS</div>
-                <h2>Your JD will appear here</h2>
-                <p>Complete the form and click Generate JD.</p>
-              </div>
+              <OutputState title="Your JD will appear here" message="Complete the form and click Generate JD." />
             )}
           </div>
         </section>
       </div>
+      {isGenerating && (
+        <div className="workspace-loading-overlay" aria-live="polite">
+          <GeneratingState />
+        </div>
+      )}
     </main>
   )
 }
 
-function JdPreviewDocument({
-  formData,
-  mustHaveSkills,
-  niceToHaveSkills,
+function JdOutputDocument({ content }: { content: string }) {
+  return <JDContentRenderer content={content} />
+}
+
+function GeneratingState() {
+  const steps = [
+    'Reading role details',
+    'Structuring responsibilities',
+    'Optimizing tone and seniority',
+    'Preparing final job description',
+  ]
+
+  return (
+    <div className="generating-state">
+      <div className="generating-orb" aria-hidden="true">
+        HS
+      </div>
+      <div>
+        <h2>HireScript AI is working</h2>
+        <p>Turning your role details into a structured, ready-to-review job description.</p>
+      </div>
+      <div className="generation-progress" aria-hidden="true">
+        <span />
+      </div>
+      <ol className="generating-steps">
+        {steps.map((step, index) => (
+          <li style={{ '--step-delay': `${index * 180}ms` } as CSSProperties} key={step}>
+            <span />
+            {step}
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
+function OutputState({
+  title,
+  message,
+  tone = 'neutral',
 }: {
-  formData: JdFormData
-  mustHaveSkills: string[]
-  niceToHaveSkills: string[]
+  title: string
+  message: string
+  tone?: 'neutral' | 'error'
 }) {
   return (
-    <article className="fake-jd-document">
-      <h1>{fallback(formData.jobTitle, 'Untitled role')}</h1>
-      <div className="jd-meta-row">
-        <span>{formatEnum(formData.workMode)}</span>
-        <span>{fallback(formData.location, 'Location not set')}</span>
-        <span>{formatEnum(formData.seniority)}</span>
-        <span>{fallback(formData.industry, 'Industry not set')}</span>
-      </div>
-
-      <section>
-        <h3>About the role</h3>
-        <p>
-          Backend connection comes in Phase 3. This preview shows how the generated job
-          description will occupy the editor workspace after the API is connected.
-        </p>
-        <p>
-          We are looking for a {formatEnum(formData.seniority).toLowerCase()} candidate to help
-          build reliable systems, collaborate with the team, and bring strong product judgment to
-          the role.
-        </p>
-      </section>
-
-      <section>
-        <h3>Must-have skills</h3>
-        <ul>
-          {mustHaveSkills.map((skill) => (
-            <li key={skill}>{skill}</li>
-          ))}
-        </ul>
-      </section>
-
-      {niceToHaveSkills.length > 0 && (
-        <section>
-          <h3>Nice to have</h3>
-          <ul>
-            {niceToHaveSkills.map((skill) => (
-              <li key={skill}>{skill}</li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      <section>
-        <h3>Tone and length</h3>
-        <p>
-          Tone: {formatEnum(formData.tone)}. Target length: {formatEnum(formData.targetLength)}.
-        </p>
-      </section>
-    </article>
+    <div className={`output-empty-state ${tone === 'error' ? 'output-error-state' : ''}`}>
+      <div aria-hidden="true">HS</div>
+      <h2>{title}</h2>
+      <p>{message}</p>
+    </div>
   )
 }
 

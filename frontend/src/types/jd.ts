@@ -47,3 +47,40 @@ export type JdPreviewData = Omit<JdFormData, 'mustHaveSkills' | 'niceToHaveSkill
   mustHaveSkills: string[]
   niceToHaveSkills: string[]
 }
+
+export type GenerateJdRequest = {
+  jobTitle: string
+  seniority: Seniority
+  location: string
+  workMode: WorkMode
+  mustHaveSkills: string[]
+  tone: Tone
+  targetLength: TargetLength
+  companyName?: string
+  department?: string
+  industry?: string
+  niceToHaveSkills?: string[]
+  yearsExperience?: string
+  educationRequirement?: EducationRequirement
+  salaryMin?: number
+  salaryMax?: number
+  salaryCurrency?: string
+  benefits?: string[]
+  cultureKeywords?: string[]
+  growthOpportunity?: string
+  targetPersona?: string
+  notes?: string
+}
+
+export type GenerateJdResponse = {
+  id: string
+  content: string
+}
+
+export type ProblemDetail = {
+  type?: string
+  title?: string
+  status?: number
+  detail?: string
+  instance?: string
+}
